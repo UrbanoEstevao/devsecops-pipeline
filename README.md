@@ -1,5 +1,7 @@
 # DevSecOps Pipeline for GitHub (100% open source)
 
+[![AppSec Pipeline](https://github.com/UrbanoEstevao/devsecops-pipeline/actions/workflows/appsec-pipeline.yml/badge.svg)](https://github.com/UrbanoEstevao/devsecops-pipeline/actions/workflows/appsec-pipeline.yml)
+
 A reusable, policy-driven application security pipeline for GitHub Actions.
 SAST, SCA, secret scanning, container scanning and DAST all report into one
 format (SARIF), one place (GitHub code scanning, plus DefectDojo as an option) and one
