@@ -58,11 +58,13 @@ def result_location(result: dict) -> str:
 
 def load_findings(reports: Path):
     findings = []
+    tools = set()  # every tool that produced a report, even with 0 findings
     for sarif_file in sorted(reports.rglob("*.sarif")):
         doc = json.loads(sarif_file.read_text(encoding="utf-8"))
         for run in doc.get("runs", []):
             tool = run.get("tool", {}).get("driver", {})
             tool_name = tool.get("name", sarif_file.stem)
+            tools.add(tool_name)
             rules = {r.get("id"): r for r in tool.get("rules", [])}
             for res in run.get("results", []):
                 rule_id = res.get("ruleId") or "unknown"
@@ -74,7 +76,7 @@ def load_findings(reports: Path):
                     "location": result_location(res),
                     "message": (res.get("message", {}).get("text") or "").splitlines()[0][:140],
                 })
-    return findings
+    return findings, tools
 
 
 def active_exceptions(policy: dict, today: dt.date):
@@ -111,7 +113,7 @@ def main() -> int:
     thresholds = policy.get("max_findings", {"critical": 0, "high": 0})
     overrides = {k.lower(): v for k, v in (policy.get("severity_override") or {}).items()}
 
-    findings = load_findings(args.reports)
+    findings, tools = load_findings(args.reports)
     for f in findings:
         if f["tool"].lower() in overrides:
             f["severity"] = overrides[f["tool"].lower()]
@@ -122,6 +124,8 @@ def main() -> int:
 
     totals = Counter(f["severity"] for f in counted)
     per_tool = defaultdict(Counter)
+    for t in tools:  # show tools with zero findings too
+        per_tool[t]
     for f in counted:
         per_tool[f["tool"]][f["severity"]] += 1
 
