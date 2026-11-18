@@ -2,7 +2,7 @@
 # Same thresholds as the real policy, but in `warn` mode so the showcase
 # pipeline stays green while still reporting everything it caught.
 # Flip to `enforce` to watch the gate block the build.
-mode: warn
+mode: enforce
 
 max_findings:
   critical: 0
