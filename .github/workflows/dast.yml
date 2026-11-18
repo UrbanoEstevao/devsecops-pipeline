@@ -1,0 +1,139 @@
+name: DAST (ZAP API scan)
+
+on:
+  workflow_call:
+    inputs:
+      compose-file:
+        description: docker compose file that starts the target app (ephemeral env)
+        type: string
+        required: true
+      openapi-url:
+        description: URL of the OpenAPI spec served by the running app
+        type: string
+        required: true
+      target-url:
+        description: Base URL the scanner should hit (overrides servers[] in the spec)
+        type: string
+        required: true
+      openapi-file:
+        description: Repo path of the spec, used to anchor DAST findings in code scanning
+        type: string
+        default: "openapi.json"
+      zap-image:
+        description: Pin to a digest in production (ghcr.io/zaproxy/zaproxy@sha256:...)
+        type: string
+        default: "ghcr.io/zaproxy/zaproxy:stable"
+      zap-rules-file:
+        description: Optional ZAP rules config (IGNORE/WARN/FAIL per rule id)
+        type: string
+        default: ""
+      toolkit-repository:
+        description: Repo hosting these workflows' scripts (set when calling from another repo)
+        type: string
+        default: ""
+      toolkit-ref:
+        type: string
+        default: "main"
+      upload-to-code-scanning:
+        type: boolean
+        default: true
+    secrets:
+      dast-auth-header:
+        description: "Optional header for authenticated scans, format Name: value (e.g. Authorization: Bearer xyz)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  zap:
+    name: ZAP API scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout toolkit scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.toolkit-repository || github.repository }}
+          ref: ${{ inputs.toolkit-repository && inputs.toolkit-ref || github.sha }}
+          path: .appsec-toolkit
+          persist-credentials: false
+
+      - name: Start ephemeral environment
+        env:
+          COMPOSE_FILE: ${{ inputs.compose-file }}
+        run: docker compose -f "$COMPOSE_FILE" up -d --build --wait --wait-timeout 120
+
+      - name: Run ZAP API scan
+        env:
+          ZAP_IMAGE: ${{ inputs.zap-image }}
+          OPENAPI_URL: ${{ inputs.openapi-url }}
+          TARGET_URL: ${{ inputs.target-url }}
+          RULES_FILE: ${{ inputs.zap-rules-file }}
+          AUTH_HEADER: ${{ secrets.dast-auth-header }}
+        run: |
+          mkdir -p zap-out reports && chmod 777 zap-out
+          extra=(); envs=()
+          if [ -n "$RULES_FILE" ]; then cp "$RULES_FILE" zap-out/rules.tsv; extra+=(-c rules.tsv); fi
+          if [ -n "$AUTH_HEADER" ]; then
+            # ZAP packaged scans add this header to every request (authenticated scanning)
+            envs+=(-e "ZAP_AUTH_HEADER=${AUTH_HEADER%%:*}" -e "ZAP_AUTH_HEADER_VALUE=${AUTH_HEADER#*: }")
+          fi
+          set +e
+          docker run --rm --network host "${envs[@]}" -v "$PWD/zap-out:/zap/wrk:rw" "$ZAP_IMAGE" \
+            zap-api-scan.py -t "$OPENAPI_URL" -f openapi -O "$TARGET_URL" \
+            -J zap.json -r zap.html -I "${extra[@]}"
+          rc=$?
+          set -e
+          # 0 = clean, 1 = FAIL-level alerts, 2 = warnings; 3 = scanner error -> fail the job
+          echo "ZAP exit code: $rc"
+          if [ "$rc" -ge 3 ]; then echo "::error::ZAP failed to run"; exit 1; fi
+
+      - name: Convert ZAP report to SARIF
+        if: always() && hashFiles('zap-out/zap.json') != ''
+        env:
+          OPENAPI_FILE: ${{ inputs.openapi-file }}
+        run: python3 .appsec-toolkit/scripts/zap_to_sarif.py zap-out/zap.json reports/zap.sarif --anchor "$OPENAPI_FILE"
+
+      - name: App logs (on failure)
+        if: failure()
+        env:
+          COMPOSE_FILE: ${{ inputs.compose-file }}
+        run: docker compose -f "$COMPOSE_FILE" logs
+
+      - name: Tear down environment
+        if: always()
+        env:
+          COMPOSE_FILE: ${{ inputs.compose-file }}
+        run: docker compose -f "$COMPOSE_FILE" down -v
+
+      - name: Upload to GitHub code scanning
+        if: always() && inputs.upload-to-code-scanning && hashFiles('reports/zap.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: reports/zap.sarif
+          category: dast-zap
+
+      - name: Store report for the gate
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sarif-zap
+          path: reports/zap.sarif
+          retention-days: 14
+
+      - name: Store HTML report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: zap-html-report
+          path: zap-out/zap.html
+          retention-days: 30

@@ -1,0 +1,5 @@
+reports/
+zap-out/
+.appsec-toolkit/
+__pycache__/
+*.db

@@ -1,0 +1,87 @@
+name: Container scan (Trivy image)
+
+on:
+  workflow_call:
+    inputs:
+      context:
+        description: Docker build context
+        type: string
+        default: "."
+      dockerfile:
+        description: Path to Dockerfile (relative to repo root). Defaults to <context>/Dockerfile
+        type: string
+        default: ""
+      trivy-version:
+        type: string
+        default: "0.76.2"
+      trivy-sha256:
+        type: string
+        default: "bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf"
+      upload-to-code-scanning:
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  image-scan:
+    name: Build + Trivy image scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Trivy (checksum-verified)
+        env:
+          V: ${{ inputs.trivy-version }}
+          SHA: ${{ inputs.trivy-sha256 }}
+        run: |
+          f="trivy_${V}_Linux-64bit.tar.gz"
+          curl -sSfL -o "$f" "https://github.com/aquasecurity/trivy/releases/download/v${V}/${f}"
+          echo "${SHA}  ${f}" | sha256sum -c -
+          tar -xzf "$f" trivy && sudo mv trivy /usr/local/bin/
+
+      - name: Build image (not pushed)
+        env:
+          CONTEXT: ${{ inputs.context }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        run: |
+          docker build -t "scan-target:${GITHUB_SHA}" -f "${DOCKERFILE:-$CONTEXT/Dockerfile}" "$CONTEXT"
+
+      - name: Scan image
+        run: |
+          mkdir -p reports
+          trivy image --scanners vuln,secret --format sarif \
+            --output reports/trivy-image.sarif "scan-target:${GITHUB_SHA}"
+          trivy image --format cyclonedx --output reports/sbom-image.cdx.json "scan-target:${GITHUB_SHA}"
+          trivy image --severity CRITICAL --scanners vuln "scan-target:${GITHUB_SHA}"
+
+      - name: Upload to GitHub code scanning
+        if: always() && inputs.upload-to-code-scanning && hashFiles('reports/trivy-image.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: reports/trivy-image.sarif
+          category: container-trivy
+
+      - name: Store report for the gate
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sarif-trivy-image
+          path: reports/trivy-image.sarif
+          retention-days: 14
+
+      - name: Store image SBOM
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-image
+          path: reports/sbom-image.cdx.json
+          retention-days: 90

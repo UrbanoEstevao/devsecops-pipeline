@@ -1,0 +1,11 @@
+# Ephemeral DAST target: spun up inside the GitHub runner, torn down after the scan.
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:5000:5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20

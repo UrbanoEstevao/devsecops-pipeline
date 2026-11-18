@@ -1,0 +1,73 @@
+# Orchestrator: wires the reusable workflows together against the demo app.
+# Other repos call the same reusable workflows -- see README "Use it in your repo".
+name: AppSec Pipeline
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 6 * * 1-5" # nightly full scan, catches newly published CVEs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: appsec-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    uses: ./.github/workflows/secrets.yml
+    permissions:
+      contents: read
+      security-events: write
+
+  sast:
+    uses: ./.github/workflows/sast.yml
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      path: demo-app
+
+  sca:
+    uses: ./.github/workflows/sca.yml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+    with:
+      path: demo-app
+
+  container:
+    uses: ./.github/workflows/container.yml
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      context: demo-app
+
+  dast:
+    uses: ./.github/workflows/dast.yml
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      compose-file: demo-app/docker-compose.yml
+      openapi-url: http://localhost:5000/openapi.json
+      target-url: http://localhost:5000
+      openapi-file: demo-app/openapi.json
+
+  gate:
+    needs: [secrets, sast, sca, container, dast]
+    if: always()
+    uses: ./.github/workflows/gate.yml
+    permissions:
+      contents: read
+    with:
+      policy: policy/demo-app-policy.yml
+    secrets:
+      defectdojo-url: ${{ secrets.DEFECTDOJO_URL }}
+      defectdojo-token: ${{ secrets.DEFECTDOJO_TOKEN }}

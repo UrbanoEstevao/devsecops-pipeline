@@ -1,0 +1,8 @@
+# Intentionally outdated versions with known CVEs so SCA has something to find.
+Flask==2.0.1
+Werkzeug==2.0.2
+Jinja2==3.0.1
+MarkupSafe==2.0.1
+itsdangerous==2.0.1
+click==8.0.1
+PyYAML==5.3.1

@@ -1,0 +1,11 @@
+# Keeps the pinned action SHAs up to date (Dependabot updates the SHA + version comment).
+# demo-app/ is intentionally NOT included: its vulnerable dependencies are the point.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

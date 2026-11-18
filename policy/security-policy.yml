@@ -1,0 +1,29 @@
+# Security gate policy (policy-as-code). Reviewed via PR like any other code.
+#
+# mode: enforce -> pipeline fails on violations
+#       warn    -> violations reported in the job summary, pipeline stays green
+mode: enforce
+
+# Max number of findings allowed per severity. -1 = unlimited.
+max_findings:
+  critical: 0
+  high: 0
+  medium: -1
+  low: -1
+  info: -1
+
+# Force a severity for every finding of a tool, regardless of what it reports.
+# A leaked secret is always critical.
+severity_override:
+  Gitleaks: critical
+
+# Risk acceptances. Each needs a reason and an owner, and should expire.
+# Expired exceptions stop applying automatically and are flagged in the summary.
+# Matching fields (all optional, glob patterns): tool, rule, path.
+exceptions:
+  - tool: Trivy
+    rule: "CVE-2023-0000*"
+    path: "*"
+    reason: "Example: not reachable, base image upgrade tracked in JIRA-123"
+    owner: "@appsec-team"
+    expires: 2026-01-31

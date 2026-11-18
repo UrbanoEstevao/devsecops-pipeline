@@ -1,0 +1,38 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Vulnerable Demo API", "version": "1.0.0" },
+  "servers": [{ "url": "http://localhost:5000" }],
+  "paths": {
+    "/health": {
+      "get": { "summary": "Health check", "responses": { "200": { "description": "OK" } } }
+    },
+    "/api/users": {
+      "get": {
+        "summary": "Find users by name",
+        "parameters": [{ "name": "name", "in": "query", "schema": { "type": "string", "example": "alice" } }],
+        "responses": { "200": { "description": "Users" } }
+      }
+    },
+    "/api/greet": {
+      "get": {
+        "summary": "Greeting page",
+        "parameters": [{ "name": "name", "in": "query", "schema": { "type": "string", "example": "steve" } }],
+        "responses": { "200": { "description": "HTML greeting" } }
+      }
+    },
+    "/api/lookup": {
+      "get": {
+        "summary": "DNS lookup",
+        "parameters": [{ "name": "host", "in": "query", "schema": { "type": "string", "example": "localhost" } }],
+        "responses": { "200": { "description": "Lookup output" } }
+      }
+    },
+    "/api/import": {
+      "post": {
+        "summary": "Import YAML config",
+        "requestBody": { "content": { "text/plain": { "schema": { "type": "string", "example": "key: value" } } } },
+        "responses": { "200": { "description": "Imported" } }
+      }
+    }
+  }
+}

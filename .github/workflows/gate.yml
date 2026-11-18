@@ -1,0 +1,89 @@
+name: Security gate
+
+on:
+  workflow_call:
+    inputs:
+      policy:
+        description: Policy file in the calling repo (falls back to the toolkit default)
+        type: string
+        default: "policy/security-policy.yml"
+      toolkit-repository:
+        type: string
+        default: ""
+      toolkit-ref:
+        type: string
+        default: "main"
+      defectdojo-product:
+        description: DefectDojo product name (only used if DefectDojo secrets are set)
+        type: string
+        default: ""
+    secrets:
+      defectdojo-url:
+        required: false
+      defectdojo-token:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: Policy gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout toolkit scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.toolkit-repository || github.repository }}
+          ref: ${{ inputs.toolkit-repository && inputs.toolkit-ref || github.sha }}
+          path: .appsec-toolkit
+          persist-credentials: false
+
+      - name: Collect all SARIF reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sarif-*
+          path: reports
+          merge-multiple: true
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Evaluate policy
+        env:
+          POLICY: ${{ inputs.policy }}
+        run: |
+          python -m pip install --quiet pyyaml
+          [ -f "$POLICY" ] || POLICY=.appsec-toolkit/policy/security-policy.yml
+          echo "Using policy: $POLICY"
+          python .appsec-toolkit/scripts/gate.py --reports reports --policy "$POLICY"
+
+      - name: Push findings to DefectDojo (optional)
+        if: always()
+        env:
+          DD_URL: ${{ secrets.defectdojo-url }}
+          DD_TOKEN: ${{ secrets.defectdojo-token }}
+          DD_PRODUCT: ${{ inputs.defectdojo-product || github.repository }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          if [ -z "$DD_URL" ] || [ -z "$DD_TOKEN" ]; then
+            echo "DefectDojo not configured, skipping."; exit 0
+          fi
+          for f in reports/*.sarif; do
+            tool=$(basename "$f" .sarif)
+            echo "Re-importing $tool"
+            curl -sSf -X POST "${DD_URL%/}/api/v2/reimport-scan/" \
+              -H "Authorization: Token ${DD_TOKEN}" \
+              -F "scan_type=SARIF" -F "file=@${f}" \
+              -F "product_type_name=GitHub" -F "product_name=${DD_PRODUCT}" \
+              -F "engagement_name=CI/CD" -F "test_title=${tool}" \
+              -F "branch_tag=${BRANCH}" -F "commit_hash=${GITHUB_SHA}" \
+              -F "auto_create_context=true" -F "close_old_findings=true" \
+              -F "deduplication_on_engagement=true" > /dev/null
+          done
