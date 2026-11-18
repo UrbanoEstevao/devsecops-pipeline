@@ -1,16 +1,12 @@
-# DevSecOps Pipeline for GitHub (100% open source)
+# DevSecOps Pipeline for GitHub
 
 [![AppSec Pipeline](https://github.com/UrbanoEstevao/devsecops-pipeline/actions/workflows/appsec-pipeline.yml/badge.svg)](https://github.com/UrbanoEstevao/devsecops-pipeline/actions/workflows/appsec-pipeline.yml)
 
-A reusable, policy-driven application security pipeline for GitHub Actions.
-SAST, SCA, secret scanning, container scanning and DAST all report into one
-format (SARIF), one place (GitHub code scanning, plus DefectDojo as an option) and one
-**policy-as-code gate** that decides whether a build ships.
+I built this to show how a full application security pipeline fits together on GitHub using only open source tools: secrets, SAST, SCA, container scanning and DAST, all feeding one gate that decides whether a PR can merge.
 
-A deliberately vulnerable API in [`demo-app/`](demo-app/) gives the pipeline
-real findings to catch.
+It's a portfolio project, but the workflows are reusable, so you can point your own repos at them.
 
-> ⚠️ `demo-app/` is **intentionally vulnerable** and exists only to give the pipeline real findings to catch. Don't deploy it. Its Dependabot alerts and the hardcoded key are planted on purpose.
+> ⚠️ [`demo-app/`](demo-app/) is a deliberately vulnerable API that gives the pipeline real findings to catch. Don't deploy it. The bugs, the fake key and the old dependencies are all planted on purpose.
 
 ```mermaid
 flowchart LR
@@ -41,32 +37,22 @@ flowchart LR
 | Gate | [`scripts/gate.py`](scripts/gate.py) | after all scanners | Normalises severities across tools and applies the policy |
 | Tracking | [DefectDojo](https://github.com/DefectDojo/django-DefectDojo) | optional | Re-import with dedup and auto-close of fixed findings |
 
-## Design decisions
+## Why it works this way
 
-- **Reusable workflows (`workflow_call`).** Each scanner is its own workflow. Any repo adopts the
-  whole pipeline in about 30 lines, and the AppSec team upgrades tools in one place.
-- **SARIF everywhere.** Every tool outputs SARIF. ZAP doesn't, so
-  [`zap_to_sarif.py`](scripts/zap_to_sarif.py) converts it, which puts DAST findings in the same
-  Security tab as SAST.
-- **Severity normalisation.** Tools disagree on severity. The gate uses `security-severity`
-  (CVSS-like) when a tool provides it and falls back to SARIF `level` otherwise. Per-tool overrides
-  are allowed, for example *every leaked secret is critical*.
-- **Policy-as-code with expiring exceptions.** Risk acceptances live in git with a reason, an owner
-  and an expiry date. Expired waivers stop applying automatically and are flagged.
-- **Warn → enforce rollout.** `mode: warn` reports without blocking, so teams can adopt the
-  pipeline without stopping delivery and then flip to `enforce`.
-- **Developer experience.** PR scans are diff-aware and parallel, results show up as inline PR
-  annotations, and the gate writes a readable job summary.
+- **PR scans only report what the PR changes.** If you dump every old finding on a developer, they'll turn the gate off within a week. The full scan runs on `main` and nightly.
+- **Warn first, enforce later.** The demo policy is in `warn` mode so the repo stays green. Flip it to `enforce` and the gate blocks the PR.
+- **One format for everything.** Every tool outputs SARIF, and a small script converts ZAP's report, so DAST findings land in the same place as the rest.
+- **Exceptions expire.** A risk acceptance needs a reason, an owner and a date, so it can't sit in the config forever.
 
-### Pipeline hardening (securing the pipeline itself)
+### Securing the pipeline itself
 
-- Every third-party action is **pinned to a full commit SHA** (mutable tags have been hijacked
-  before, e.g. `tj-actions/changed-files` in 2025). Dependabot keeps the pins current.
-- Scanner binaries are downloaded and **verified against a pinned SHA-256** before they run.
-- **Least-privilege `permissions:`** per job, and `persist-credentials: false` on every checkout.
-- Workflow inputs reach shell scripts only through `env:`, never interpolated with `${{ }}`
-  inside `run:`, which **prevents script injection**.
-- The vulnerable app runs bound to `127.0.0.1` inside the runner and is torn down after the scan.
+A security pipeline that can be hijacked is worse than none, so I treated the workflows like production code:
+
+- Every third-party action is pinned to a full commit SHA. Mutable tags have been hijacked before (`tj-actions/changed-files`, 2025), and Dependabot keeps the pins current.
+- Scanner binaries are checked against a pinned SHA-256 before they run.
+- Each job gets the minimum `permissions:`, and checkouts use `persist-credentials: false`.
+- Workflow inputs reach shell scripts only through `env:`, never through `${{ }}` inside `run:`, which closes the script-injection hole.
+- The vulnerable app binds to `127.0.0.1` inside the runner and is torn down after the scan.
 
 ## Use it in your repo
 
@@ -108,7 +94,7 @@ jobs:
 
 The caller's `policy/security-policy.yml` is used if it exists. Otherwise the toolkit default applies.
 
-## What the demo app should trigger
+## What the demo app triggers
 
 | Planted issue | Caught by |
 |---|---|
@@ -129,7 +115,13 @@ repo stays green while still reporting everything. Set it to `enforce` to watch 
 - **Code scanning upload** works on public repos for free. Private repos need GitHub Advanced
   Security. Uploads use `continue-on-error`, and the gate works either way.
 - **DefectDojo**: add the `DEFECTDOJO_URL` and `DEFECTDOJO_TOKEN` repo secrets to enable it.
-- **Branch protection**: make the `gate / Policy gate` check required on `main`.
+- **Branch protection**: Make gate / Policy gate a required status check in your ruleset, so a failing gate actually blocks merges.
+
+## Known limitations
+
+- The Trivy image scan counts one finding per affected package, and the demo's end-of-life base image inflates the totals. `--ignore-unfixed` and unique-CVE counts are next.
+- DAST runs unauthenticated. The auth header option exists, but I haven't tested it against a real login.
+- I've only run it against the one demo app, so expect to tune it for yours.
 
 ## Roadmap
 
